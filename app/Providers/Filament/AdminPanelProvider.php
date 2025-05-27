@@ -6,10 +6,10 @@ use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
-use Filament\Pages;
+// use Filament\Pages;
 use App\Filament\Pages\Auth\Register as CustomRegisterPage;
 use App\Filament\Pages\Admin\Dashboard as CustomDashboardPage;
-use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
+// use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
@@ -30,7 +30,8 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->login()
-            ->registration(CustomRegisterPage::class) // <-- TAMBAHKAN INI untuk halaman registrasi
+            ->registration(CustomRegisterPage::class)
+            ->emailVerification()
             ->colors([
                 'primary' => Color::Amber,
             ])
@@ -49,7 +50,7 @@ class AdminPanelProvider extends PanelProvider
                 AddQueuedCookiesToResponse::class,
                 StartSession::class,
                 AuthenticateSession::class,
-                EnsureEmailIsVerified::class,
+                // EnsureEmailIsVerified::class,
                 ShareErrorsFromSession::class,
                 VerifyCsrfToken::class,
                 SubstituteBindings::class,
