@@ -2,8 +2,6 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
-// use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
@@ -13,11 +11,15 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // \App\Models\User::factory(10)->create();
-
         $this->call([
-            AdminUserSeeder::class,
-            // Seeder lain bisa ditambahkan di sini
+            UserSeeder::class,
+            CategorySeeder::class,
+            DestinationSeeder::class, // Destination harus ada sebelum DestinationImage dan Slot
+            DestinationImageSeeder::class,
+            SlotSeeder::class,
+            // Anda bisa menambahkan BookingSeeder dan ReviewSeeder di sini nanti
+            // BookingSeeder::class,
+            // ReviewSeeder::class,
         ]);
     }
 }
