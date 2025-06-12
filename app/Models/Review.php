@@ -30,29 +30,44 @@ class Review extends Model
         'images_urls' => 'array',
     ];
 
-    public function user()
+    // Menambahkan accessor ke serialisasi JSON model secara default
+    protected $appends = ['review_image_public_urls'];
+
+    /**
+     * Otomatisasi proses saat event model terjadi.
+     */
+    protected static function boot() // <-- DITAMBAHKAN
     {
-        return $this->belongsTo(User::class);
+        parent::boot();
+
+        // Saat sebuah review dihapus, jalankan fungsi ini
+        static::deleting(function (Review $review) {
+            // Jika ada gambar, hapus dari storage
+            if (is_array($review->images_urls)) {
+                foreach ($review->images_urls as $path) {
+                    if (!empty($path)) {
+                        Storage::disk('public')->delete($path);
+                    }
+                }
+            }
+        });
     }
 
-    public function destination()
-    {
-        return $this->belongsTo(Destination::class);
-    }
+    // --- Relasi (Sudah Benar) ---
+    public function user() { return $this->belongsTo(User::class); }
+    public function destination() { return $this->belongsTo(Destination::class); }
+    public function booking() { return $this->belongsTo(Booking::class); }
 
-    public function booking()
-    {
-        return $this->belongsTo(Booking::class);
-    }
-
+    // --- Accessor (Sudah Benar) ---
     public function getReviewImagePublicUrlsAttribute(): array
     {
-        if (is_array($this->images_urls)) {
-            return array_map(function ($imagePath) {
-                if(!empty($imagePath)) return Storage::disk('public')->url($imagePath);
-                return null;
-            }, array_filter($this->images_urls));
+        if (empty($this->images_urls)) {
+            return [];
         }
-        return [];
+
+        return collect($this->images_urls)
+            ->filter() // Menghapus nilai null atau string kosong
+            ->map(fn ($imagePath) => Storage::disk('public')->url($imagePath))
+            ->all();
     }
 }

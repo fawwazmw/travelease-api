@@ -3,52 +3,41 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Destination;
+use App\Http\Resources\DestinationResource;
 use App\Models\Category;
+use App\Models\Destination;
+use App\Models\DestinationImage;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse; // Ditambahkan untuk return type yang lebih eksplisit
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-// use Illuminate\Validation\Rule; // Dihapus jika validasi slug unik saat update tidak digunakan
 
 class DestinationController extends Controller
 {
-    public function __construct()
-    {
-        // Terapkan middleware untuk otorisasi admin pada method yang mengubah data
-        $this->middleware(['auth:sanctum', 'isAdmin'])->only(['store', 'update', 'destroy']);
-    }
+    // <-- DIHAPUS: Blok __construct() yang menyebabkan error telah dihapus.
+    // Penerapan middleware sekarang sepenuhnya ditangani oleh file routes/api.php,
+    // yang merupakan praktik yang lebih modern dan aman.
 
     /**
      * Menampilkan daftar destinasi yang aktif.
      */
-    public function index(Request $request): JsonResponse
+    public function index(Request $request): JsonResource
     {
         $query = Destination::query();
-
-        // Secara default, hanya tampilkan yang aktif untuk publik
-        // Admin bisa melihat semua jika ada parameter tambahan atau endpoint berbeda
-        if (!(auth()->check() && auth()->user()->role === 'admin' && $request->boolean('include_inactive'))) {
+        if (!(auth()->check() && auth()->user()?->role === 'admin' && $request->boolean('include_inactive'))) {
             $query->where('is_active', true);
         }
 
-        $query->with('category:id,name,slug'); // Eager load kategori dengan kolom spesifik
+        // Eager load relasi untuk performa
+        $query->with(['category:id,name,slug', 'images']);
 
         if ($request->filled('category_slug')) {
-            $category = Category::where('slug', $request->category_slug)->first();
-            if ($category) {
-                $query->where('category_id', $category->id);
-            } else {
-                return response()->json(['data' => [], 'message' => 'Kategori tidak ditemukan.'], 404);
-            }
+            $query->whereHas('category', fn ($q) => $q->where('slug', 'like', $request->category_slug));
         }
-
         if ($request->filled('search')) {
             $searchTerm = $request->search;
-            $query->where(function ($q) use ($searchTerm) {
-                $q->where('name', 'like', "%{$searchTerm}%")
-                    ->orWhere('description', 'like', "%{$searchTerm}%");
-            });
+            $query->where(fn ($q) => $q->where('name', 'like', "%{$searchTerm}%")->orWhere('description', 'like', "%{$searchTerm}%"));
         }
 
         $sortBy = $request->input('sort_by', 'created_at');
@@ -60,20 +49,14 @@ class DestinationController extends Controller
 
         $destinations = $query->paginate($request->input('per_page', 10));
 
-        // Dengan $appends di model Destination, 'image_urls' dan 'main_image_url' akan otomatis ditambahkan.
-        // Blok transform di bawah ini tidak lagi diperlukan jika $appends sudah diatur.
-        // $destinations->getCollection()->transform(function (Destination $destination) {
-        //     // $destination->image_urls = $destination->image_urls; // Sudah ditangani oleh $appends
-        //     return $destination;
-        // });
-
-        return response()->json($destinations);
+        // Gunakan API Resource Collection
+        return DestinationResource::collection($destinations);
     }
 
     /**
      * Menyimpan destinasi baru (oleh Admin).
      */
-    public function store(Request $request): JsonResponse
+    public function store(Request $request): DestinationResource
     {
         $validatedData = $request->validate([
             'name' => 'required|string|max:255',
@@ -88,104 +71,93 @@ class DestinationController extends Controller
             'contact_phone' => 'nullable|string|max:20',
             'contact_email' => 'nullable|email|max:255',
             'is_active' => 'sometimes|boolean',
-            'images' => 'nullable|array',
+            'images' => 'nullable|array|max:5',
             'images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:2048'
         ]);
 
-        $validatedData['slug'] = $validatedData['slug'] ?? Str::slug($validatedData['name']);
-        if (Destination::where('slug', $validatedData['slug'])->exists()) {
-            $validatedData['slug'] .= '-' . Str::random(5); // Menggunakan Str::random yang lebih pendek
-        }
+        $validatedData['created_by'] = auth()->id();
 
-        $imagePaths = [];
-        if ($request->hasFile('images')) {
-            foreach ($request->file('images') as $imageFile) {
-                $imagePaths[] = $imageFile->store('destination-images', 'public');
+        // Logika penyimpanan gambar yang benar menggunakan transaksi DB
+        $destination = DB::transaction(function () use ($validatedData, $request) {
+            $destination = Destination::create($validatedData);
+
+            if ($request->hasFile('images')) {
+                foreach ($request->file('images') as $key => $imageFile) {
+                    $path = $imageFile->store('destination-images', 'public');
+                    $destination->images()->create([
+                        'image_url' => $path,
+                        'is_primary' => ($key == 0), // Jadikan gambar pertama sebagai primary
+                    ]);
+                }
             }
-        }
-        $validatedData['images'] = $imagePaths;
-        $validatedData['created_by'] = auth()->id(); // Mengisi created_by dengan ID admin yang login
+            return $destination;
+        });
 
-        $destination = Destination::create($validatedData);
-        $destination->load('category:id,name,slug'); // Load relasi untuk respons
-
-        // 'image_urls' dan 'main_image_url' akan otomatis ditambahkan oleh $appends di model
-        return response()->json($destination, 201);
+        $destination->load(['category:id,name,slug', 'images']);
+        return new DestinationResource($destination);
     }
 
     /**
      * Menampilkan detail destinasi spesifik.
      */
-    public function show(Destination $destination): JsonResponse // Menggunakan Route Model Binding
+    public function show(string $slug): DestinationResource // 1. Ubah parameter input
     {
-        if (!$destination->is_active && !(auth()->check() && auth()->user()->role === 'admin')) {
-            return response()->json(['message' => 'Destinasi tidak ditemukan atau tidak aktif.'], 404);
+        // 2. Cari destinasi secara eksplisit berdasarkan slug
+        $destination = Destination::where('slug', $slug)->firstOrFail();
+
+        // 3. Logika pengecekan status aktif tetap sama
+        if (!$destination->is_active && !(auth()->check() && auth()->user()?->role === 'admin')) {
+            abort(404, 'Destinasi tidak ditemukan atau tidak aktif.');
         }
 
-        $destination->load('category:id,name,slug');
-        // 'image_urls' dan 'main_image_url' akan otomatis ditambahkan oleh $appends di model
+        // 4. Eager load relasi yang dibutuhkan
+        $destination->load([
+            'category:id,name,slug',
+            'images',
+            'creator:id,name' // Cukup ambil id dan nama creator
+        ]);
 
-        // TODO: Load reviews jika sudah ada Review model dan relasi
-        // $destination->load(['reviews' => function ($query) {
-        //    $query->where('status', 'approved')->with('user:id,name')->latest()->take(5);
-        // }]);
+        // Jangan load 'reviews' di sini karena frontend sudah memanggil endpoint review terpisah
+        // Ini untuk menjaga agar response awal tetap cepat
 
-        return response()->json($destination);
+        return new DestinationResource($destination);
     }
 
     /**
      * Mengupdate destinasi spesifik (oleh Admin).
      */
-    public function update(Request $request, Destination $destination): JsonResponse
+    public function update(Request $request, Destination $destination): DestinationResource
     {
         $validatedData = $request->validate([
             'name' => 'sometimes|required|string|max:255',
-            // Slug biasanya tidak diupdate via API untuk menjaga stabilitas URL
             'description' => 'sometimes|nullable|string',
             'category_id' => 'sometimes|required|uuid|exists:categories,id',
-            'location_address' => 'sometimes|nullable|string',
-            'latitude' => ['sometimes','nullable', 'numeric', 'regex:/^[-]?(([0-8]?[0-9])\.(\d+))|(90(\.0+)?)$/'],
-            'longitude' => ['sometimes','nullable', 'numeric', 'regex:/^[-]?((((1[0-7][0-9])|([0-9]?[0-9]))\.(\d+))|180(\.0+)?)$/'],
-            'ticket_price' => 'sometimes|nullable|numeric|min:0',
-            'operational_hours' => 'sometimes|nullable|string',
-            'contact_phone' => 'sometimes|nullable|string|max:20',
-            'contact_email' => 'sometimes|nullable|email|max:255',
             'is_active' => 'sometimes|boolean',
             'images_to_delete' => 'nullable|array',
-            'images_to_delete.*' => 'string',
-            'new_images' => 'nullable|array',
+            'images_to_delete.*' => 'uuid|exists:destination_images,id',
+            'new_images' => 'nullable|array|max:5',
             'new_images.*' => 'image|mimes:jpeg,png,jpg,gif,webp|max:2048'
         ]);
 
-        $currentImagePaths = $destination->images ?? [];
-        if ($request->filled('images_to_delete')) {
-            foreach ($request->input('images_to_delete') as $imagePathToDelete) {
-                if (in_array($imagePathToDelete, $currentImagePaths)) {
-                    Storage::disk('public')->delete($imagePathToDelete);
-                    $currentImagePaths = array_values(array_filter($currentImagePaths, fn($path) => $path !== $imagePathToDelete));
+        DB::transaction(function () use ($validatedData, $request, $destination) {
+            $destination->update($validatedData);
+
+            if ($request->filled('images_to_delete')) {
+                DestinationImage::whereIn('id', $request->input('images_to_delete'))
+                    ->where('destination_id', $destination->id)
+                    ->delete();
+            }
+
+            if ($request->hasFile('new_images')) {
+                foreach ($request->file('new_images') as $imageFile) {
+                    $path = $imageFile->store('destination-images', 'public');
+                    $destination->images()->create(['image_url' => $path]);
                 }
             }
-        }
+        });
 
-        if ($request->hasFile('new_images')) {
-            foreach ($request->file('new_images') as $imageFile) {
-                $currentImagePaths[] = $imageFile->store('destination-images', 'public');
-            }
-        }
-
-        // Hanya update field 'images' jika ada operasi gambar
-        if ($request->hasFile('new_images') || $request->filled('images_to_delete')) {
-            $validatedData['images'] = $currentImagePaths;
-        } else {
-            unset($validatedData['images']); // Hindari mengosongkan jika tidak ada aksi gambar
-        }
-
-        unset($validatedData['images_to_delete'], $validatedData['new_images']);
-
-        $destination->update($validatedData);
-        $destination->load('category:id,name,slug');
-        // 'image_urls' dan 'main_image_url' akan otomatis oleh $appends
-        return response()->json($destination);
+        $destination->load(['category:id,name,slug', 'images']);
+        return new DestinationResource($destination);
     }
 
     /**
@@ -193,17 +165,7 @@ class DestinationController extends Controller
      */
     public function destroy(Destination $destination): JsonResponse
     {
-        // Hapus gambar terkait dari storage sebelum menghapus record
-        if (is_array($destination->images)) {
-            foreach ($destination->images as $imagePath) {
-                if (!empty($imagePath)) { // Pastikan path tidak kosong
-                    Storage::disk('public')->delete($imagePath);
-                }
-            }
-        }
-
         $destination->delete();
-
         return response()->json(['message' => 'Destinasi berhasil dihapus.'], 200);
     }
 }

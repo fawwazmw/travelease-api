@@ -13,97 +13,70 @@ use App\Http\Controllers\Api\ReviewController;
 |--------------------------------------------------------------------------
 | API Routes
 |--------------------------------------------------------------------------
-|
-| Here is where you can register API routes for your application. These
-| routes are loaded by the RouteServiceProvider and all of them will
-| be assigned to the "api" middleware group. Make something great!
-|
 */
 
-// Rute publik untuk autentikasi
+// == Rute Publik (Tidak Perlu Login) ==
+
+// Autentikasi
 Route::post('/register', [AuthController::class, 'register'])->name('api.register');
 Route::post('/login', [AuthController::class, 'login'])->name('api.login');
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword'])->name('api.password.email');
 Route::post('/reset-password', [AuthController::class, 'resetPassword'])->name('api.password.update');
 
-// Rute yang memerlukan autentikasi (menggunakan middleware sanctum)
-Route::middleware('auth:sanctum')->group(function () {
-    Route::post('/logout', [AuthController::class, 'logout'])->name('api.logout');
-    Route::get('/user', [AuthController::class, 'user'])->name('api.user');
-    // Mengirim ulang email verifikasi (memerlukan user login)
-    Route::post('/email/verification-notification', [AuthController::class, 'sendVerificationEmail'])
-        ->middleware(['throttle:6,1']) // Batasi pengiriman ulang: 6 kali per menit
-        ->name('api.verification.send');
-});
-
-// Verifikasi email (dipanggil dari link di email)
-// Route ini harus memiliki nama 'verification.verify' agar notifikasi email Laravel berfungsi dengan benar
-// Middleware 'signed' memastikan URL tidak diubah.
-// Middleware 'throttle:6,1' untuk keamanan tambahan.
+// Verifikasi Email (URL dari email)
 Route::get('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])
     ->middleware(['signed', 'throttle:6,1'])
     ->name('verification.verify');
 
-// --- Destination Routes ---
-// Rute publik untuk mendapatkan destinasi
-Route::get('/destinations', [DestinationController::class, 'index'])->name('api.destinations.index');
-Route::get('/destinations/{destination:slug}', [DestinationController::class, 'show'])->name('api.destinations.show'); // Bisa pakai slug atau ID
-
-// Rute yang memerlukan autentikasi admin untuk manajemen destinasi
-Route::middleware(['auth:sanctum', 'isAdmin'])->group(function () { // 'isAdmin' adalah contoh middleware role
-    Route::post('/destinations', [DestinationController::class, 'store'])->name('api.destinations.store');
-    Route::put('/destinations/{destination}', [DestinationController::class, 'update'])->name('api.destinations.update'); // Menggunakan PUT untuk update keseluruhan
-    // Atau bisa juga POST dengan _method=PUT jika klien kesulitan dengan PUT
-    // Route::post('/destinations/{destination}', [DestinationController::class, 'update'])->name('api.destinations.update');
-    Route::delete('/destinations/{destination}', [DestinationController::class, 'destroy'])->name('api.destinations.destroy');
-});
-
-// --- Category Routes ---
-// Rute publik untuk mendapatkan kategori
+// Data Publik (Kategori, Destinasi, Slot, Review)
 Route::get('/categories', [CategoryController::class, 'index'])->name('api.categories.index');
-Route::get('/categories/{slug}', [CategoryController::class, 'show'])->name('api.categories.show'); // Menggunakan slug
+Route::get('/categories/{slug}', [CategoryController::class, 'show'])->name('api.categories.show');
 
-// Jika kamu memerlukan endpoint untuk admin mengelola kategori via API (biasanya tidak perlu jika sudah ada Filament)
-// Route::middleware(['auth:sanctum', 'isAdmin'])->group(function () {
-//     Route::post('/categories', [CategoryController::class, 'store'])->name('api.categories.store');
-//     Route::put('/categories/{category}', [CategoryController::class, 'update'])->name('api.categories.update');
-//     Route::delete('/categories/{category}', [CategoryController::class, 'destroy'])->name('api.categories.destroy');
-// });
+Route::get('/destinations', [DestinationController::class, 'index'])->name('api.destinations.index');
+Route::get('/destinations/{destination:slug}', [DestinationController::class, 'show'])->name('api.destinations.show');
 
-// --- Slot Routes ---
-// Rute publik untuk mendapatkan slot tersedia untuk sebuah destinasi
-Route::get('/destinations/{destinationSlugOrId}/slots', [SlotController::class, 'getAvailableSlots'])
-    ->name('api.destinations.slots.available');
+Route::get('/destinations/{destinationSlugOrId}/slots', [SlotController::class, 'getAvailableSlots'])->name('api.destinations.slots.available');
+Route::get('/destinations/{destinationSlugOrId}/reviews', [ReviewController::class, 'indexForDestination'])->name('api.destinations.reviews.index');
 
-// Jika kamu memerlukan endpoint untuk admin mengelola slot via API (biasanya tidak perlu jika sudah ada Filament)
-// Route::middleware(['auth:sanctum', 'isAdmin'])->group(function () {
-//     Route::apiResource('slots', SlotController::class)->except(['index']); // 'index' mungkin berbeda untuk admin
-//     Route::get('/admin/slots', [SlotController::class, 'adminIndex'])->name('api.admin.slots.index'); // Contoh admin index
-// });
 
-// --- Booking Routes (Memerlukan Autentikasi Pengguna) ---
+// == Rute Terproteksi (Wajib Login) ==
+
 Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/bookings', [BookingController::class, 'index'])->name('api.bookings.index');
-    Route::post('/bookings', [BookingController::class, 'store'])->name('api.bookings.store');
-    Route::get('/bookings/{booking}', [BookingController::class, 'show'])->name('api.bookings.show'); // Menggunakan Route Model Binding
-    Route::post('/bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('api.bookings.cancel'); // Menggunakan POST untuk aksi pembatalan
-});
 
-// --- Review Routes ---
-// Rute publik untuk mendapatkan ulasan destinasi
-Route::get('/destinations/{destinationSlugOrId}/reviews', [ReviewController::class, 'indexForDestination'])
-    ->name('api.destinations.reviews.index');
+    // --- Rute Pengguna ---
+    Route::post('/logout', [AuthController::class, 'logout'])->name('api.logout');
+    Route::get('/user', [AuthController::class, 'user'])->name('api.user');
+    Route::post('/email/verification-notification', [AuthController::class, 'sendVerificationEmail'])
+        ->middleware(['throttle:6,1'])
+        ->name('api.verification.send');
 
-// Rute yang memerlukan autentikasi pengguna
-Route::middleware('auth:sanctum')->group(function () {
+    // --- Rute Booking (Semua method butuh login) ---
+    Route::apiResource('bookings', BookingController::class)->except(['update']);
+    Route::post('/bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('api.bookings.cancel');
+
+    // --- Rute Review (Hanya aksi tertentu yang butuh login) ---
     Route::post('/reviews', [ReviewController::class, 'store'])->name('api.reviews.store');
     Route::get('/reviews/{review}', [ReviewController::class, 'show'])->name('api.reviews.show'); // Untuk user lihat review sendiri
     Route::put('/reviews/{review}', [ReviewController::class, 'update'])->name('api.reviews.update');
     Route::delete('/reviews/{review}', [ReviewController::class, 'destroy'])->name('api.reviews.destroy');
+
+
+    // == Rute Khusus Admin (Wajib Login & Role Admin) ==
+
+    Route::middleware('isAdmin')->group(function () {
+        // Rute untuk mengelola destinasi oleh Admin
+        Route::post('/destinations', [DestinationController::class, 'store'])->name('api.destinations.store');
+        Route::put('/destinations/{destination}', [DestinationController::class, 'update'])->name('api.destinations.update');
+        Route::delete('/destinations/{destination}', [DestinationController::class, 'destroy'])->name('api.destinations.destroy');
+
+        // Tambahkan rute admin lain di sini jika ada (misal: kelola kategori, slot, dll)
+        // Route::post('/categories', [CategoryController::class, 'store']);
+    });
 });
 
-// Fallback route untuk request ke endpoint yang tidak ada (opsional)
+
+// == Fallback Route ==
+// Akan dijalankan jika tidak ada rute lain yang cocok
 Route::fallback(function(){
-    return response()->json([
-        'message' => 'Endpoint tidak ditemukan. Jika error berlanjut, hubungi admin.'], 404);
+    return response()->json(['message' => 'Endpoint tidak ditemukan.'], 404);
 });

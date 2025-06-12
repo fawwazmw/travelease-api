@@ -127,7 +127,7 @@ class DestinationResource extends Resource
                 Section::make('Gambar Destinasi')
                     ->collapsible()
                     ->schema([
-                        Repeater::make('destinationImages') // Nama relasi di model Destination
+                        Repeater::make('images') // Nama relasi di model Destination
                         ->label('Daftar Gambar')
                             ->relationship() // Ini penting untuk memberitahu Filament ini adalah relasi
                             ->schema([
@@ -170,7 +170,7 @@ class DestinationResource extends Resource
                 ImageColumn::make('main_image_url') // Accessor ini akan menggunakan relasi
                 ->label('Gambar Utama')
                     ->disk('public')
-                    ->defaultImageUrl(asset('images/placeholder-destination.png')),
+                    ->defaultImageUrl(asset('images/placeholder-image.webp')),
                 TextColumn::make('name')
                     ->label('Nama Destinasi')
                     ->searchable()->sortable()

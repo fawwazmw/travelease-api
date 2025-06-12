@@ -111,7 +111,7 @@ class AuthController extends Controller
 
             $tokenName = 'api-token-' . $user->id;
             // Hapus semua token lama pengguna ini agar hanya ada satu token aktif yang baru
-            $user->tokens()->delete(); 
+            $user->tokens()->delete();
             $token = $user->createToken($tokenName)->plainTextToken;
             Log::info('API Login: Token created successfully.', ['user_id' => $user->id]);
 

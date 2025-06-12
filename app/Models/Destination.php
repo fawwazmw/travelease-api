@@ -20,15 +20,12 @@ class Destination extends Model
         'latitude',
         'longitude',
         'category_id',
-        'created_by',
+        'created_by', // <-- DIPERBARUI: Ditambahkan agar bisa di-create secara massal
         'ticket_price',
         'operational_hours',
         'contact_phone',
         'contact_email',
-        // 'average_rating', // Sebaiknya dihitung, bukan diisi manual
-        // 'total_reviews',  // Sebaiknya dihitung, bukan diisi manual
         'is_active',
-        // Kolom 'images' (array) sudah tidak ada lagi di sini
     ];
 
     protected $casts = [
@@ -40,23 +37,18 @@ class Destination extends Model
         'latitude' => 'decimal:8',
         'longitude' => 'decimal:8',
         'average_rating' => 'decimal:2',
-        'total_reviews' => 'integer', // Tambahkan cast jika kolomnya ada
+        'total_reviews' => 'integer',
     ];
 
-    /**
-     * Atribut yang akan otomatis ditambahkan saat model diserialisasi ke array/JSON.
-     */
     protected $appends = ['main_image_url', 'image_urls'];
 
+    // boot() method tidak perlu diubah, sudah benar.
     protected static function boot()
     {
         parent::boot();
-
-        // Otomatis buat slug saat destinasi dibuat jika slug kosong
         static::creating(function ($destination) {
             if (empty($destination->slug)) {
                 $destination->slug = Str::slug($destination->name);
-                // Pastikan slug unik
                 $originalSlug = $destination->slug;
                 $count = 1;
                 while (static::whereSlug($destination->slug)->exists()) {
@@ -65,111 +57,50 @@ class Destination extends Model
                 }
             }
         });
-
-        // Saat destinasi dihapus, semua record DestinationImage terkait akan otomatis dihapus
-        // karena ada onDelete('cascade') pada foreign key di migrasi destination_images.
-        // Model event 'deleting' di DestinationImage akan menangani penghapusan file dari storage.
     }
 
-    /**
-     * Relasi: Satu destinasi dimiliki oleh satu kategori.
-     */
-    public function category()
-    {
-        return $this->belongsTo(Category::class);
-    }
+    // --- Relasi (Sudah Benar) ---
+    public function category() { return $this->belongsTo(Category::class); }
+    public function creator() { return $this->belongsTo(User::class, 'created_by'); }
+    public function images() { return $this->hasMany(DestinationImage::class); }
+    public function slots() { return $this->hasMany(Slot::class); }
+    public function bookings() { return $this->hasMany(Booking::class); }
+    public function reviews() { return $this->hasMany(Review::class); }
 
-    /**
-     * Relasi: Satu destinasi dibuat oleh satu pengguna (admin).
-     */
-    public function creator()
-    {
-        return $this->belongsTo(User::class, 'created_by');
-    }
+    // --- Accessor (PENTING: Perbaikan Performa) ---
 
-    /**
-     * Relasi: Satu destinasi bisa memiliki BANYAK gambar.
-     */
-    public function destinationImages()
-    {
-        return $this->hasMany(DestinationImage::class);
-    }
-
-    /**
-     * Relasi: Satu destinasi bisa memiliki banyak slot kunjungan.
-     */
-    public function slots()
-    {
-        return $this->hasMany(Slot::class);
-    }
-
-    /**
-     * Relasi: Satu destinasi bisa memiliki banyak pemesanan.
-     */
-    public function bookings()
-    {
-        return $this->hasMany(Booking::class);
-    }
-
-    /**
-     * Relasi: Satu destinasi bisa memiliki banyak ulasan.
-     */
-    public function reviews()
-    {
-        return $this->hasMany(Review::class);
-    }
-
-    /**
-     * Accessor untuk mendapatkan URL gambar utama.
-     * Mengambil gambar yang 'is_primary' atau gambar pertama jika tidak ada.
-     */
     public function getMainImageUrlAttribute(): ?string
     {
-        $primaryImage = $this->destinationImages()->where('is_primary', true)->first();
+        // <-- DIPERBARUI: Blok 'if (!$this->relationLoaded...)' dihapus untuk mencegah N+1 Query.
+        // Accessor ini sekarang berasumsi relasi 'images' sudah dimuat oleh Controller.
+        $primaryImage = $this->images->firstWhere('is_primary', true);
         if ($primaryImage && $primaryImage->image_url) {
-            return Storage::disk('public')->url($primaryImage->image_url);
+            return $primaryImage->public_url; // Menggunakan accessor dari model DestinationImage
         }
 
-        $firstImage = $this->destinationImages()->orderBy('created_at', 'asc')->first(); // Ambil yang paling awal diunggah
+        $firstImage = $this->images->sortBy('created_at')->first();
         if ($firstImage && $firstImage->image_url) {
-            return Storage::disk('public')->url($firstImage->image_url);
+            return $firstImage->public_url; // Menggunakan accessor dari model DestinationImage
         }
 
-        return asset('images/placeholder-destination.png'); // Sediakan placeholder ini di public/images
+        return asset('images/placeholder-image.webp');
     }
 
-    /**
-     * Accessor untuk mendapatkan array URL publik dari semua gambar destinasi.
-     */
     public function getImageUrlsAttribute(): array
     {
-        if ($this->relationLoaded('destinationImages')) {
-            // Jika relasi sudah di-load, gunakan koleksi yang ada untuk efisiensi
-            return $this->destinationImages
-                ->whereNotNull('image_url')
-                ->map(fn ($image) => Storage::disk('public')->url($image->image_url))
-                ->all();
-        }
-        // Jika belum, query ke database
-        return $this->destinationImages()->get()
+        // <-- DIPERBARUI: Blok 'if (!$this->relationLoaded...)' dihapus.
+        return $this->images
             ->whereNotNull('image_url')
-            ->map(fn ($image) => Storage::disk('public')->url($image->image_url))
+            ->map(fn (DestinationImage $image) => $image->public_url) // Lebih bersih dengan accessor
             ->all();
     }
 
-
-    /**
-     * Method untuk mengupdate rating rata-rata destinasi.
-     * Dipanggil setelah ulasan disimpan atau dihapus.
-     */
+    // Method updateAverageRating() tidak perlu diubah, sudah benar.
     public function updateAverageRating(): void
     {
         $approvedReviews = $this->reviews()->where('status', 'approved');
-        $newAverage = $approvedReviews->avg('rating');
-        $newTotal = $approvedReviews->count();
-
-        $this->average_rating = $newAverage ?? 0;
-        $this->total_reviews = $newTotal;
-        $this->saveQuietly(); // Simpan tanpa memicu event lain
+        $this->average_rating = $approvedReviews->avg('rating') ?? 0;
+        $this->total_reviews = $approvedReviews->count();
+        $this->saveQuietly();
     }
 }

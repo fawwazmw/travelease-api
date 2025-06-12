@@ -29,6 +29,21 @@ class Slot extends Model
         'is_active' => 'boolean',
     ];
 
+    /**
+     * Menambahkan accessor ke serialisasi JSON model secara default.
+     */
+    protected $appends = ['available_capacity']; // <-- DITAMBAHKAN
+
+    /**
+     * Accessor untuk mendapatkan sisa kapasitas yang tersedia.
+     *
+     * @return int
+     */
+    public function getAvailableCapacityAttribute(): int // <-- DITAMBAHKAN
+    {
+        return $this->capacity - $this->booked_count;
+    }
+
     public function destination()
     {
         return $this->belongsTo(Destination::class);
